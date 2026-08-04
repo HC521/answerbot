@@ -1,0 +1,21 @@
+# AnswerBot-Screen 日志与运行产物
+logs/
+build/
+dist/
+*.spec.bak
+
+# 隐私：配置文件含 API Key，绝不入库
+config.json
+
+# 发布包（内含 exe + 含 Key 的 config.json，绝不入库）
+*.zip
+AnswerBot-Screen-发布包*.zip
+
+# 发布包解压副本目录（含 exe/config.json）
+demo/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

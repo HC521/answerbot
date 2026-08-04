@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>VMware 模拟考试 - 程序测试页</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; background: #ffffff; color: #000000;
+         margin: 0; padding: 60px 80px; }
+  .no { color: #666; font-size: 22px; margin-bottom: 20px; }
+  .q { font-size: 36px; font-weight: bold; margin-bottom: 40px; }
+  .opt { font-size: 30px; margin: 16px 0; }
+  button { font-size: 26px; padding: 12px 40px; margin-top: 50px; cursor: pointer;
+           background: #f0f0f0; border: 1px solid #999; border-radius: 6px; }
+  button:hover { background: #e0e0e0; }
+</style>
+</head>
+<body>
+  <div class="no" id="no">第 1 / 5 题</div>
+  <div class="q" id="q">加载中…</div>
+  <div id="opts"></div>
+  <button onclick="prev()">上一题</button>
+  <button onclick="next()" style="margin-left:20px">下一题</button>
+
+<script>
+const QUESTIONS = [
+  { q: "我国的根本政治制度是（    ）",
+    opts: ["A. 人民代表大会制度", "B. 中国共产党领导的多党合作和政治协商制度",
+           "C. 民族区域自治制度", "D. 基层群众自治制度"] },
+  { q: "光在真空中的传播速度约为（    ）",
+    opts: ["A. 3×10^6 m/s", "B. 3×10^8 m/s", "C. 3×10^10 m/s", "D. 340 m/s"] },
+  { q: "水的化学式是（    ）",
+    opts: ["A. CO2", "B. O2", "C. H2O", "D. NaCl"] },
+  { q: "中国最长的河流是（    ）",
+    opts: ["A. 黄河", "B. 珠江", "C. 长江", "D. 黑龙江"] },
+  { q: "地球绕太阳公转一圈约需要（    ）",
+    opts: ["A. 一天", "B. 一个月", "C. 一年", "D. 一小时"] },
+];
+
+let i = 0;
+function render() {
+  document.getElementById("no").textContent = "第 " + (i + 1) + " / 5 题";
+  document.getElementById("q").textContent = QUESTIONS[i].q;
+  document.getElementById("opts").innerHTML =
+    QUESTIONS[i].opts.map(o => '<div class="opt">' + o + "</div>").join("");
+}
+function next() { i = (i + 1) % QUESTIONS.length; render(); }
+function prev() { i = (i - 1 + QUESTIONS.length) % QUESTIONS.length; render(); }
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+pywin32>=306
+Pillow>=10.0
+numpy>=1.26
+requests>=2.31
+mss>=9.0
+keyboard>=0.13.5
+pynput>=1.7.6
+pyinstaller>=6.0
+pystray>=0.19
