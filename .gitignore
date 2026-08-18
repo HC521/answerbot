@@ -13,6 +13,10 @@ AnswerBot-Screen-发布包*.zip
 
 # 发布包解压副本目录（含 exe/config.json）
 demo/
+2.2/
+
+# 可执行文件（发布产物，不入库）
+*.exe
 
 # Python
 __pycache__/

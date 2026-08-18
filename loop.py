@@ -23,7 +23,7 @@ import time
 import config as cfg_mod
 from ai_client import AiError, ask_ai
 from change_detector import ChangeDetector
-from screen_capture import ScreenCapture, ScreenCaptureError, crop_pixels
+from screen_capture import ScreenCapture, ScreenCaptureError, crop_pixels, mask_rect
 
 log = logging.getLogger("loop")
 
@@ -149,6 +149,11 @@ class AnswerLoop:
                 x, y, w, h = roi
                 crop = crop_pixels(img, (int(x * sx), int(y * sy),
                                          int(w * sx), int(h * sy)))
+            else:
+                # 全图识别时排除悬浮窗区域（v2.3：防模型读到悬浮窗自身内容）
+                ov_rect = self.overlay.get_rect_pixels()
+                if ov_rect:
+                    crop = mask_rect(img, ov_rect)
             result = self._ask_with_fallback(crop)
             if self._dedupe(result):
                 log.info("与上次结果相同，去重（不重复显示）")

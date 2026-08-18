@@ -17,14 +17,15 @@ log = logging.getLogger("overlay")
 
 
 class AnswerOverlay:
-    """答案悬浮窗。on_toggle / on_bind 为回调（由 main/loop 注入）。"""
+    """答案悬浮窗。on_toggle / on_bind / on_trigger 为回调（由 main/loop 注入）。"""
 
     WIDTH, HEIGHT = 420, 200
 
-    def __init__(self, cfg: dict, on_toggle=None, on_bind=None):
+    def __init__(self, cfg: dict, on_toggle=None, on_bind=None, on_trigger=None):
         self.cfg = cfg
         self.on_toggle = on_toggle or (lambda: None)   # 开始/暂停回调
         self.on_bind = on_bind or (lambda: None)       # 录制绑定回调
+        self.on_trigger = on_trigger or (lambda: None) # 保底按钮回调（v2.3）
         self.running = True                            # 循环运行状态（供按钮显示）
         self.visible = True
         self._drag = None                              # 拖拽偏移
@@ -69,6 +70,12 @@ class AnswerOverlay:
                                  font=("Microsoft YaHei UI", 9))
         self.no_label.pack(side="left")
 
+        # v2.3 保底按钮：点击立即识别（放最右，显眼）
+        self.btn_trigger = tk.Button(top, text="保底", command=self._on_trigger_click,
+                                     font=("Microsoft YaHei UI", 8), bd=0,
+                                     bg="#4ade80", fg="#1e1e1e", padx=6, pady=1,
+                                     activebackground="#22c55e", activeforeground="white")
+        self.btn_trigger.pack(side="right", padx=2)
         self.btn_hide = tk.Button(top, text="隐藏", command=self.toggle_visibility,
                                   font=("Microsoft YaHei UI", 8), bd=0,
                                   bg="#3a3a3a", fg="#cccccc", padx=6, pady=1,
@@ -123,7 +130,8 @@ class AnswerOverlay:
         self.root.bind("<Button-3>", self._show_menu)
 
     def _drag_start(self, event):
-        if event.widget in (self.btn_hide, self.btn_toggle, self.btn_bind):
+        if event.widget in (self.btn_hide, self.btn_toggle, self.btn_bind,
+                            self.btn_trigger):
             return  # 按钮区域不拖拽（不阻断事件，按钮才能正常响应）
         self._drag = (event.x_root - self.root.winfo_x(),
                       event.y_root - self.root.winfo_y())
@@ -241,6 +249,10 @@ class AnswerOverlay:
 
     def _on_bind_click(self):
         self.on_bind()
+
+    def _on_trigger_click(self):
+        """保底按钮：立即触发一次识别（v2.3）。"""
+        self.on_trigger()
 
     def set_running_state(self, running: bool):
         """loop 线程同步运行状态（保证按钮文本一致）。"""

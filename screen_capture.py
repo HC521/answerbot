@@ -89,6 +89,22 @@ def crop_pixels(img: Image.Image, rect) -> Image.Image:
     return img.crop((x0, y0, x1, y1))
 
 
+def mask_rect(img: Image.Image, rect, fill=(255, 255, 255)) -> Image.Image:
+    """把矩形区域填充为 fill（v2.3：全图识别前排除悬浮窗区域，防模型读到悬浮窗）。"""
+    if not rect:
+        return img
+    import numpy as np
+
+    arr = np.asarray(img.convert("RGB")).copy()
+    x, y, w, h = (int(v) for v in rect)
+    x0, y0 = max(0, x), max(0, y)
+    x1 = min(img.width, x + w)
+    y1 = min(img.height, y + h)
+    if x1 > x0 and y1 > y0:
+        arr[y0:y1, x0:x1] = fill
+    return Image.fromarray(arr)
+
+
 class ScreenCapture:
     """按 config 抓全屏；提供缩略图供检测链路使用。"""
 

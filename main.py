@@ -83,8 +83,14 @@ def main():
         overlay.set_status("请按下要绑定的按键或鼠标键…（Esc 取消）")
         listener.record(lambda binding: _on_record_done(overlay, binding))
 
+    def on_trigger():
+        # 保底按钮（v2.3）：点击立即识别；识别耗时数秒，放线程避免卡 UI
+        threading.Thread(target=loop.manual_trigger, daemon=True,
+                         name="btn-trigger").start()
+
     overlay.on_toggle = on_toggle
     overlay.on_bind = on_bind
+    overlay.on_trigger = on_trigger
     overlay.set_running_state(True)
     overlay.set_status("就绪：监听中（全屏）")
 

@@ -149,9 +149,16 @@ class ChangeDetector:
             return self.IDLE
 
         ds = [hamming(a, b) for a, b in zip(hs, self.prev_hashes)]
-        d = max(ds)  # 变化强度 = 最大块距离（块级，v2.2）
         self.prev_hashes = hs
         now = time.monotonic()
+
+        # —— v2.3：与排除区（悬浮窗）重叠的块不参与变化/稳定判定 ——
+        # 悬浮窗显示答案、拖拽等变化不应触发识别，也不应污染 ROI
+        ignored = self._ignored_block_mask(img, exclude_rects)
+        for i, ign in enumerate(ignored):
+            if ign:
+                ds[i] = 0
+        d = max(ds)
 
         # —— 基准帧抑制：所有块与基准帧都稳定 → 同一画面（不重复识别）——
         if (
@@ -159,6 +166,9 @@ class ChangeDetector:
             and self.base_hashes is not None
         ):
             ds_base = [hamming(a, b) for a, b in zip(hs, self.base_hashes)]
+            for i, ign in enumerate(ignored):
+                if ign:
+                    ds_base[i] = 0
             if max(ds_base) <= self.t_stable:
                 self.prev_img = img  # 差分基准保持最新帧
                 return self.SUPPRESSED
@@ -200,8 +210,12 @@ class ChangeDetector:
 
         changed_rects: 本次帧间 pHash 变化块的矩形列表（v2.2 加强：
         像素差分受面积过滤影响可能漏掉小文字区域，块区域兜底保证 ROI 不丢）。
+        **排除区重叠的块跳过**（v2.3 修复：悬浮窗所在块不能被当成题目 ROI，
+        否则识别到的是悬浮窗自身内容）。
         """
         for r in changed_rects:
+            if exclude_rects and any(_rects_overlap(r, e) for e in exclude_rects):
+                continue
             self._diff_rects.append(r)
         if self.prev_img is None:
             return
@@ -215,17 +229,31 @@ class ChangeDetector:
         if r is not None:
             self._diff_rects.append(r)
 
-    def _changed_block_rects(self, img: Image.Image, ds: list[int]) -> list[tuple]:
-        """帧间距离 ≥ t_change_block 的块在缩略图上的矩形列表。"""
+    def _block_rects(self, img: Image.Image) -> list[tuple]:
+        """grid 各块在缩略图上的矩形列表（行优先）。"""
         w, h = img.size
         cols, rows = self.grid
         rects = []
-        for i, dd in enumerate(ds):
-            if dd >= self.t_change_block:
-                r, c = divmod(i, cols)
+        for r in range(rows):
+            for c in range(cols):
                 x0, y0 = c * w // cols, r * h // rows
                 x1, y1 = (c + 1) * w // cols, (r + 1) * h // rows
                 rects.append((x0, y0, x1 - x0, y1 - y0))
+        return rects
+
+    def _ignored_block_mask(self, img: Image.Image, exclude_rects) -> list[bool]:
+        """与排除区（悬浮窗等）重叠的块标记（True=忽略，不参与判定）。"""
+        if not exclude_rects:
+            return [False] * (self.grid[0] * self.grid[1])
+        return [any(_rects_overlap(r, e) for e in exclude_rects)
+                for r in self._block_rects(img)]
+
+    def _changed_block_rects(self, img: Image.Image, ds: list[int]) -> list[tuple]:
+        """帧间距离 ≥ t_change_block 的块在缩略图上的矩形列表。"""
+        rects = []
+        for i, dd in enumerate(ds):
+            if dd >= self.t_change_block:
+                rects.append(self._block_rects(img)[i])
         return rects
 
     def _finalize_roi(self) -> None:
