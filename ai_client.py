@@ -26,11 +26,19 @@ ENDPOINTS = {
 }
 
 SYSTEM_PROMPT = (
-    "你是一个答题助手。用户发来考试题目截图，请识别题目和选项，"
-    "并给出最准确的答案。只输出 JSON，不要输出任何其他内容。"
-    "JSON 格式：{\"question\": \"题目全文\", \"options\": [\"A. ...\", \"B. ...\"], "
-    "\"answer\": \"A\", \"confidence\": 0.9}。"
-    "answer 为选项字母（如 A/B/C/D）或简短答案文本；confidence 为 0~1 的把握度。"
+    "你是一个答题助手。用户发来考试题目截图，请仔细阅读题干和全部选项后作答。\n"
+    "第一步：识别题型——题干或选项区含「多选/多项/不定项/至少/正确选项有」等字样为多选；"
+    "题干为陈述句且无 A/B/C/D 选项为判断题；否则为单选。\n"
+    "第二步：作答。\n"
+    "只输出 JSON，不要输出任何其他内容。JSON 格式："
+    "{\"question\": \"题目全文\", \"type\": \"single|multiple|judge\", "
+    "\"options\": [\"A. ...\", \"B. ...\"], \"answer\": \"...\", \"confidence\": 0.9}\n"
+    "answer 规则：\n"
+    "- 单选题：单个选项字母，如 \"B\"；\n"
+    "- 多选题：全部正确选项字母连续书写，如 \"ACD\"（不要用逗号/顿号分隔）；\n"
+    "- 判断题：\"对\" 或 \"错\"（也可写 \"正确\"/\"错误\"）；\n"
+    "- 拿不准时凭领域知识选最可能正确的，不要留空。"
+    "confidence 为 0~1 的把握度。"
 )
 
 
@@ -38,8 +46,12 @@ class AiError(Exception):
     """AI 识别失败（网络/鉴权/解析）。"""
 
 
-def compress(img, max_w: int = 1280, quality: int = 85) -> str:
-    """压缩为 JPEG base64 字符串（宽超 1280 等比缩小）。"""
+def compress(img, max_w: int = 1600, quality: int = 90) -> str:
+    """压缩为 JPEG base64 字符串（宽超 max_w 等比缩小）。
+
+    v2.4：max_w 1280→1600、quality 85→90——考试题目字号小，
+    提高发送分辨率与画质可明显改善小字识别正确率（token 成本略有上升）。
+    """
     if img.width > max_w:
         img = img.resize((max_w, int(img.height * max_w / img.width)))
     buf = io.BytesIO()
@@ -73,10 +85,10 @@ def parse_result(content: str) -> dict:
         except Exception:
             continue
 
-    # 3) 正则兜底
-    m = re.search(r"答案\s*[:：]\s*([A-Ha-h])", text)
+    # 3) 正则兜底（v2.4：多选答案提取全部字母，如 "答案：ACD" → "ACD"）
+    m = re.findall(r"答案\s*[:：]\s*([A-Ha-h、,\s]+)", text)
     if m:
-        result["answer"] = m.group(1).upper()
+        result["answer"] = "".join(re.findall(r"[A-Ha-h]", m[0])).upper()
     m = re.search(r"题目\s*[:：]?\s*(.{1,200}?)(?:\n|$)", text, re.S)
     if m:
         result["question"] = m.group(1).strip()
@@ -99,12 +111,20 @@ def _pick(data: dict) -> dict:
     if not isinstance(opts, list):
         opts = []
     conf = data.get("confidence") or data.get("把握度")
-    # answer 可能是 "A"、"A. xxx"、"A：xxx"，归一化
+    # answer 归一化（v2.4 多选支持）：
+    # - "A"、"A. xxx"、"A：xxx" → "A"
+    # - "ACD"、"A,C,D"、"A、C、D"、"A C D" → "ACD"（多选全取，不截断）
+    # - 判断题文本（对/错/正确/错误/√/×）原样保留
     if isinstance(ans, str):
-        m = re.match(r"\s*([A-Ha-h])", ans)
-        if m:
-            ans = m.group(1).upper()
-    return {"question": str(q), "options": opts, "answer": str(ans), "confidence": conf}
+        letters = re.findall(r"[A-Ha-h]", ans)
+        if letters:
+            ans = "".join(letters).upper()
+        else:
+            ans = ans.strip().rstrip("。.")
+            mapping = {"√": "对", "×": "错", "正确": "对", "错误": "错", "是": "对", "否": "错"}
+            ans = mapping.get(ans, ans)
+    return {"question": str(q), "type": _get("type", "题型"), "options": opts,
+            "answer": str(ans), "confidence": conf}
 
 
 def ask_ai(cfg: dict, img, provider: str | None = None) -> dict:

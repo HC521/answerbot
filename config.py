@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
     "ark_api_key": "",                  # 豆包（火山方舟）API Key
     "ark_model": "",                    # 豆包模型/接入点 ID（ep-xxx），以火山方舟控制台为准
     "dashscope_api_key": "",            # 通义千问（DashScope）API Key
-    "qwen_model": "qwen-vl-plus",       # 千问模型
+    "qwen_model": "qwen-vl-max",        # 千问模型（v2.4：默认 vl-max，识别/推理更强；可改 qwen-vl-plus 省钱）
     "ai_provider": "doubao",            # doubao / qwen
 
     # —— 变化检测 ——

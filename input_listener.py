@@ -227,7 +227,12 @@ class InputListener:
     # 触发
     # ------------------------------------------------------------------
     def _trigger(self):
-        """带冷却的手动触发入口。"""
+        """带冷却的手动触发入口。
+
+        v2.4 修复：识别回调必须在线程中执行——pynput 的 on_press/on_click
+        运行在 Windows 低级钩子回调里，若长时间阻塞（全屏抓屏+AI 请求可达 10s），
+        系统会超时移除钩子，导致绑定键只起效一次后永久失效。
+        """
         cooldown = self.cfg.get("manual_cooldown_ms", 5000) / 1000.0
         now = time.monotonic()
         with self._lock:
@@ -235,8 +240,9 @@ class InputListener:
                 log.info("手动触发冷却中，忽略")
                 return
             self._last_trigger = now
-        log.info("手动触发按键按下")
-        self.trigger_cb()
+        log.info("手动触发按键按下（异步识别）")
+        threading.Thread(target=self.trigger_cb, daemon=True,
+                         name="manual-trigger").start()
 
 
 if __name__ == "__main__":
