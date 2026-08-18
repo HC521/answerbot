@@ -43,6 +43,8 @@ class AnswerLoop:
             diff_threshold=cfg.get("diff_threshold", 25),
             diff_area_ratio=cfg.get("diff_area_ratio", 0.005),
             question_roi=cfg.get("question_roi"),
+            grid=cfg.get("grid", (4, 3)),              # v2.2 块级检测
+            t_change_block=cfg.get("t_change_block", 8),
         )
         self.running = True
         self.paused = False
@@ -73,7 +75,7 @@ class AnswerLoop:
             log.warning("手动触发抓屏失败: %s", e)
             self.overlay.set_status("抓屏失败，稍后再试")
             return
-        self._recognize(img, thumb, manual=True)
+        self._recognize(img, thumb, manual=True, hint="手动触发：识别中…")
 
     # ------------------------------------------------------------------
     # 主循环
@@ -104,7 +106,7 @@ class AnswerLoop:
                 now = time.monotonic()
                 if fallback_s > 0 and now - self._last_recognize >= fallback_s:
                     log.info("定时兜底识别触发（距上次 %.0fs）", now - self._last_recognize)
-                    self._recognize(img, thumb)
+                    self._recognize(img, thumb, hint="定时兜底：重新识别中…")
             except ScreenCaptureError as e:
                 # 抓屏失败：提示并重试，不崩溃
                 log.warning("抓屏失败: %s", e)
@@ -130,14 +132,14 @@ class AnswerLoop:
     # ------------------------------------------------------------------
     # 识别（自动/手动/兜底共用）
     # ------------------------------------------------------------------
-    def _recognize(self, img, thumb, manual: bool = False):
+    def _recognize(self, img, thumb, manual: bool = False, hint: str | None = None):
         with self._lock:
             if self._busy:
                 log.info("识别进行中，忽略本次%s触发", "手动" if manual else "自动")
                 return
             self._busy = True
         try:
-            self.overlay.set_status("识别中…")
+            self.overlay.set_status(hint or "识别中…")
             # 题目 ROI 是缩略图坐标（1280 宽基准），裁剪原图前换算回原图坐标
             roi = self.detector.question_roi or self.cfg.get("question_roi")
             crop = img

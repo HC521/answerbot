@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
-"""变化检测模块（FR-03 / FR-04，v2.1 变更 B）。
+"""变化检测模块（FR-03 / FR-04，v2.2 块级 pHash 改进）。
 
 - 均值 pHash（64bit）：缩略图 → 32×32 灰度 → 3×3 均值模糊（抗抖动）→ 与均值比较；
-- 状态机：IDLE --(d≥t_change)--> CHANGING --(连续 n_stable 帧 d≤t_stable)--> STABLE；
+- **块级判定（v2.2）**：画面分成 grid(4×3) 块，每块独立 pHash；
+  - 变化判定：任一块帧间距离 ≥ t_change_block → 画面变化
+    （解决 v2.1 全屏抓取后题目区占屏比小、全局 pHash 距离被稀释导致翻页不触发）；
+  - 稳定判定：所有块帧间距离 ≤ t_stable 连续 n_stable 帧；
+  - 基准帧抑制：所有块与基准帧距离 ≤ t_stable 才视为"同一画面"
+    （新题只变题目区块 → 不误抑制；倒计时等小块跳动 → 距离小 → 正常抑制）；
+- 状态机：IDLE --(块级变化)--> CHANGING --(连续 n_stable 帧稳定)--> STABLE；
 - 超时兜底：CHANGING 超过 t_timeout_ms 未稳定 → 放弃回 IDLE；
-- 基准帧抑制：识别完成后记录基准帧，与基准帧差异小则抑制重复触发（防同一题反复识别）；
-- 题目区域定位（v2.1）：CHANGING 期间对相邻帧做像素差分，收集差异矩形，
-  稳定后取并集外接框作为 question_roi（小面积杂散区域按占比过滤；
-  与上一题 ROI 重叠时沿用旧 ROI，布局稳定时更快更准）；
+- 题目区域定位：CHANGING 期间对相邻帧做像素差分，收集差异矩形，
+  稳定后取并集外接框作为 question_roi（杂散按占比过滤；与旧 ROI 重叠沿用）；
 - exclude_rects：悬浮窗等区域在差分时排除（避免自身变化干扰）。
 """
 
@@ -84,70 +88,88 @@ def _rects_overlap(a: tuple, b: tuple) -> bool:
 
 
 class ChangeDetector:
-    """画面变化检测状态机。每次喂一帧缩略图，返回事件字符串。"""
+    """画面变化检测状态机（块级 pHash，v2.2）。每次喂一帧缩略图，返回事件。"""
 
     # 事件常量
     IDLE = "idle"          # 无变化
     CHANGING = "changing"  # 检测到变化，等待稳定
     STABLE = "stable"      # 变化后已稳定（新题完整显示）
     TIMEOUT = "timeout"    # 变化后超时未稳定（放弃本次）
-    SUPPRESSED = "suppressed"  # 与基准帧差异小，抑制重复触发
+    SUPPRESSED = "suppressed"  # 与基准帧一致，抑制重复触发
 
     def __init__(
         self,
-        t_change: int = 12,
+        t_change: int = 12,        # 保留兼容（v2.1 全局阈值，v2.2 不再直接使用）
         t_stable: int = 4,
         n_stable: int = 6,
         t_timeout_ms: int = 30000,
         diff_threshold: int = 25,
         diff_area_ratio: float = 0.005,
         question_roi: tuple | None = None,
+        grid=(4, 3),               # v2.2：检测分块 (cols, rows)
+        t_change_block: int = 5,   # v2.2：单块帧间变化阈值（实测真实窗口文字变化 3~7）
     ):
         self.t_change = t_change
+        self.t_change_block = t_change_block
         self.t_stable = t_stable
         self.n_stable = n_stable
         self.t_timeout_s = t_timeout_ms / 1000.0
         self.diff_threshold = diff_threshold
         self.diff_area_ratio = diff_area_ratio
+        self.grid = tuple(grid) if grid else (4, 3)
 
         self.state = self.IDLE
         self.prev_img: Image.Image | None = None   # 上一帧缩略图
-        self.prev_hash: int | None = None          # 上一帧指纹
-        self.base_hash: int | None = None          # 识别完成后的基准帧指纹
+        self.prev_hashes: list[int] | None = None  # 上一帧各块指纹
+        self.base_hashes: list[int] | None = None  # 基准帧各块指纹
         self.stable_count = 0
         self.changing_since = 0.0
         self._diff_rects: list[tuple] = []         # 本次变化期间的差异矩形
         self.question_roi: tuple | None = question_roi  # 题目区域（上一题）
 
+    def _block_hashes(self, img: Image.Image) -> list[int]:
+        """把图分成 grid 块，每块独立 pHash。"""
+        w, h = img.size
+        cols, rows = self.grid
+        hs = []
+        for r in range(rows):
+            for c in range(cols):
+                box = (c * w // cols, r * h // rows,
+                       (c + 1) * w // cols, (r + 1) * h // rows)
+                hs.append(phash(img.crop(box)))
+        return hs
+
     def feed(self, img: Image.Image, exclude_rects=None) -> str:
         """输入一帧缩略图，推进状态机，返回事件。"""
-        h = phash(img)
+        hs = self._block_hashes(img)
 
-        if self.prev_hash is None:
+        if self.prev_hashes is None:
             self.prev_img = img
-            self.prev_hash = h
+            self.prev_hashes = hs
             return self.IDLE
 
-        d = hamming(h, self.prev_hash)
-        self.prev_hash = h  # 相邻帧比较：每帧都更新
+        ds = [hamming(a, b) for a, b in zip(hs, self.prev_hashes)]
+        d = max(ds)  # 变化强度 = 最大块距离（块级，v2.2）
+        self.prev_hashes = hs
         now = time.monotonic()
 
-        # —— 基准帧抑制：识别完成后画面未变 → 不重复触发 ——
+        # —— 基准帧抑制：所有块与基准帧都稳定 → 同一画面（不重复识别）——
         if (
             self.state == self.IDLE
-            and self.base_hash is not None
-            and hamming(h, self.base_hash) <= self.t_stable
+            and self.base_hashes is not None
         ):
-            self.prev_img = img  # 差分基准保持最新帧
-            return self.SUPPRESSED
+            ds_base = [hamming(a, b) for a, b in zip(hs, self.base_hashes)]
+            if max(ds_base) <= self.t_stable:
+                self.prev_img = img  # 差分基准保持最新帧
+                return self.SUPPRESSED
 
         if self.state == self.IDLE:
-            if d >= self.t_change:
+            if d >= self.t_change_block:
                 self.state = self.CHANGING
                 self.stable_count = 0
                 self.changing_since = now
                 self._diff_rects = []
-                self._collect_diff(img, exclude_rects)
+                self._collect_diff(img, exclude_rects, self._changed_block_rects(img, ds))
                 return self.CHANGING
             self.prev_img = img
             return self.IDLE
@@ -169,12 +191,18 @@ class ChangeDetector:
                 return self.STABLE
         else:
             self.stable_count = 0
-            self._collect_diff(img, exclude_rects)
+            self._collect_diff(img, exclude_rects, self._changed_block_rects(img, ds))
         self.prev_img = img
         return self.CHANGING
 
-    def _collect_diff(self, img: Image.Image, exclude_rects) -> None:
-        """记录与上一帧的差异矩形（面积过滤后），用于 ROI 收敛。"""
+    def _collect_diff(self, img: Image.Image, exclude_rects, changed_rects) -> None:
+        """记录变化区域（像素差分 + 变化块区域双来源），用于 ROI 收敛。
+
+        changed_rects: 本次帧间 pHash 变化块的矩形列表（v2.2 加强：
+        像素差分受面积过滤影响可能漏掉小文字区域，块区域兜底保证 ROI 不丢）。
+        """
+        for r in changed_rects:
+            self._diff_rects.append(r)
         if self.prev_img is None:
             return
         prev = np.asarray(self.prev_img.convert("RGB"), dtype=np.uint8)
@@ -187,6 +215,19 @@ class ChangeDetector:
         if r is not None:
             self._diff_rects.append(r)
 
+    def _changed_block_rects(self, img: Image.Image, ds: list[int]) -> list[tuple]:
+        """帧间距离 ≥ t_change_block 的块在缩略图上的矩形列表。"""
+        w, h = img.size
+        cols, rows = self.grid
+        rects = []
+        for i, dd in enumerate(ds):
+            if dd >= self.t_change_block:
+                r, c = divmod(i, cols)
+                x0, y0 = c * w // cols, r * h // rows
+                x1, y1 = (c + 1) * w // cols, (r + 1) * h // rows
+                rects.append((x0, y0, x1 - x0, y1 - y0))
+        return rects
+
     def _finalize_roi(self) -> None:
         """稳定后收敛题目区域：并集外接框；与上一题 ROI 重叠则沿用旧 ROI。"""
         new_roi = _rects_union(self._diff_rects)
@@ -198,14 +239,14 @@ class ChangeDetector:
         self.question_roi = new_roi
 
     def set_base(self, img: Image.Image) -> None:
-        """识别完成后记录基准帧，抑制同一题重复触发。"""
-        self.base_hash = phash(img)
+        """识别完成后记录基准帧（块级），抑制同一题重复触发。"""
+        self.base_hashes = self._block_hashes(img)
 
     def reset(self) -> None:
         """清空全部状态（手动重新开始时使用）。"""
         self.prev_img = None
-        self.prev_hash = None
-        self.base_hash = None
+        self.prev_hashes = None
+        self.base_hashes = None
         self.state = self.IDLE
         self.stable_count = 0
         self._diff_rects = []

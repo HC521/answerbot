@@ -35,8 +35,10 @@ DEFAULT_CONFIG = {
 
     # —— 变化检测 ——
     "detect_interval_ms": 800,          # 取帧间隔（毫秒）
-    "t_change": 12,                     # 变化判定阈值（汉明距离）
-    "t_stable": 4,                      # 稳定判定阈值
+    "t_change": 12,                     # 保留兼容（v2.2 起不再使用，见 t_change_block）
+    "t_change_block": 5,                 # v2.2：块级变化判定阈值（任一块帧间距离≥此值触发；真实窗口文字变化实测 3~7，取 5）
+    "grid": [4, 3],                     # v2.2：检测分块 (列, 行)，块越小对小变化越敏感
+    "t_stable": 4,                      # 稳定判定阈值（所有块）
     "n_stable": 6,                      # 连续稳定帧数
     "t_timeout_ms": 30000,              # 变化后最大等待稳定时间
     "diff_threshold": 25,               # 像素差分阈值（v2.1 变更 B）
