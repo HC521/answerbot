@@ -2,8 +2,10 @@
 """悬浮窗模块（FR-06 / FR-07）：tkinter 置顶半透明无边框小窗。
 
 - overrideredirect(True) 无边框；-topmost 置顶；-alpha 半透明；
-- 布局：题号（小字）+ 答案（大号粗体绿色）+ 题目摘要（≤120 字）+ 状态行 + 小按钮；
+- 布局：题号 + 模型切换 + 按钮行 + 答案 + 题目摘要 + 状态行（v2.5 新增模型切换）；
 - 拖拽移动，释放时保存位置到 config（重启记忆）；
+- v2.5：位置越界自动召回——保存的位置若落在当前屏幕外（换过显示器布局、
+  双屏改单屏），启动时自动移回主屏右上角，否则窗口"消失"只剩托盘；
 - 全局热键 Ctrl+Alt+H 隐藏/恢复（keyboard 库；无权限自动降级为窗口「隐藏」按钮）；
 - 跨线程安全：loop 线程通过 root.after(0, fn) 调度 UI 更新。
 """
@@ -21,11 +23,14 @@ class AnswerOverlay:
 
     WIDTH, HEIGHT = 420, 200
 
-    def __init__(self, cfg: dict, on_toggle=None, on_bind=None, on_trigger=None):
+    def __init__(self, cfg: dict, on_toggle=None, on_bind=None, on_trigger=None,
+                 on_provider_change=None):
         self.cfg = cfg
         self.on_toggle = on_toggle or (lambda: None)   # 开始/暂停回调
-        self.on_bind = on_bind or (lambda: None)       # 录制绑定回调
-        self.on_trigger = on_trigger or (lambda: None) # 保底按钮回调（v2.3）
+        self.on_bind = on_bind or (lambda: None)       # 绑定按键回调
+        self.on_trigger = on_trigger or (lambda: None)  # 保底按钮回调（v2.3）
+        # v2.5：切换首选模型提供方；返回 True=成功（main 注入，内部调用 loop.set_provider）
+        self.on_provider_change = on_provider_change or (lambda pid: False)
         self.running = True                            # 循环运行状态（供按钮显示）
         self.visible = True
         self._drag = None                              # 拖拽偏移
@@ -42,6 +47,7 @@ class AnswerOverlay:
         self._bind_drag()
         self._register_hotkey()
         self._start_lift_loop()
+        self.refresh_providers()          # v2.5：模型菜单初始态
 
         # 关窗即退出整个程序
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -69,6 +75,17 @@ class AnswerOverlay:
         self.no_label = tk.Label(top, text="第 0 题", bg="#1e1e1e", fg="#888888",
                                  font=("Microsoft YaHei UI", 9))
         self.no_label.pack(side="left")
+
+        # v2.5：模型切换（当前首选模型 → 点开选 DeepSeek/千问/豆包）
+        self.provider_btn = tk.Menubutton(top, text="模型", font=("Microsoft YaHei UI", 8),
+                                          bd=0, bg="#2a3a2a", fg="#8ee6a0",
+                                          activebackground="#3a4a3a", activeforeground="white",
+                                          padx=6, pady=1, relief="flat", indicatoron=False,
+                                          cursor="hand2")
+        self.provider_menu = tk.Menu(self.provider_btn, tearoff=0,
+                                     font=("Microsoft YaHei UI", 9))
+        self.provider_btn.config(menu=self.provider_menu)
+        self.provider_btn.pack(side="left", padx=(8, 2))
 
         # v2.3 保底按钮：点击立即识别（放最右，显眼）
         self.btn_trigger = tk.Button(top, text="保底", command=self._on_trigger_click,
@@ -110,13 +127,68 @@ class AnswerOverlay:
         self.status_label.pack(fill="x", padx=12, pady=(0, 4))
 
     def _place_default(self):
-        """初始位置：config 记忆位置，否则屏幕 1 右上角。"""
-        x, y = self.cfg.get("overlay_pos") or [None, None]
+        """初始位置：config 记忆位置；若越界（换过显示器布局）自动召回主屏（v2.5）。"""
+        raw = self.cfg.get("overlay_pos") or [None, None]
+        x, y = (raw + [None, None])[:2] if isinstance(raw, (list, tuple)) else (None, None)
         if x is None or y is None:
-            sw = self.root.winfo_screenwidth()   # 主屏（屏幕 1）宽度
-            x = sw - self.WIDTH - 20
-            y = 40
-        self.root.geometry(f"+{int(x)}+{int(y)}")
+            x, y = self._default_pos()
+        else:
+            x, y = int(x), int(y)
+            if not self._is_pos_visible(x, y):
+                log.warning("保存的悬浮窗位置 (%d, %d) 已不在当前屏幕内"
+                            "（可能换过显示器/拔掉副屏），自动移回主屏", x, y)
+                x, y = self._default_pos()
+        self.root.geometry(f"+{x}+{y}")
+        # 确保窗口确实被映射出来（overrideredirect 窗口在某些环境下需要显式 deiconify）
+        try:
+            self.root.deiconify()
+            self.root.lift()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------- 位置校验（v2.5）
+    def _default_pos(self) -> tuple[int, int]:
+        """主屏（屏幕 1）右上角。"""
+        sw = self.root.winfo_screenwidth()
+        return max(0, sw - self.WIDTH - 20), 40
+
+    def _virtual_rect(self) -> tuple[int, int, int, int]:
+        """虚拟桌面矩形（所有显示器合并）。取不到时退回主屏尺寸。"""
+        try:
+            from screen_capture import virtual_screen_rect
+            return virtual_screen_rect()
+        except Exception:
+            return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _is_pos_visible(self, x: int, y: int) -> bool:
+        """窗口是否至少有 60% 面积落在当前虚拟桌面内。"""
+        vx, vy, vw, vh = self._virtual_rect()
+        vis_w = min(x + self.WIDTH, vx + vw) - max(x, vx)
+        vis_h = min(y + self.HEIGHT, vy + vh) - max(y, vy)
+        return vis_w >= self.WIDTH * 0.6 and vis_h >= self.HEIGHT * 0.6
+
+    def reset_position(self):
+        """把窗口召回主屏右上角并持久化（v2.5，托盘菜单/用户手动恢复用）。"""
+        def _do():
+            x, y = self._default_pos()
+            self.root.geometry(f"+{int(x)}+{int(y)}")
+            try:
+                self.root.deiconify()
+                self.root.lift()
+            except Exception:
+                pass
+            self.visible = True
+            try:
+                cfg_mod.set("overlay_pos", [int(x), int(y)])
+            except Exception as e:
+                log.warning("保存悬浮窗位置失败: %s", e)
+            self.set_status(f"窗口已移回主屏 ({int(x)}, {int(y)})")
+            log.info("悬浮窗位置已重置为 (%d, %d)", int(x), int(y))
+
+        try:
+            self.root.after(0, _do)
+        except Exception as e:
+            log.warning("重置悬浮窗位置失败: %s", e)
 
     # ------------------------------------------------------------- 拖拽
     def _bind_drag(self):
@@ -131,7 +203,7 @@ class AnswerOverlay:
 
     def _drag_start(self, event):
         if event.widget in (self.btn_hide, self.btn_toggle, self.btn_bind,
-                            self.btn_trigger):
+                            self.btn_trigger, self.provider_btn):
             return  # 按钮区域不拖拽（不阻断事件，按钮才能正常响应）
         self._drag = (event.x_root - self.root.winfo_x(),
                       event.y_root - self.root.winfo_y())
@@ -164,10 +236,23 @@ class AnswerOverlay:
             log.warning("全局热键注册失败（已降级为窗口「隐藏」按钮）: %s", e)
 
     def _show_menu(self, event):
-        """右键菜单：无边框窗口的退出/控制入口。"""
+        """右键菜单：无边框窗口的退出/控制入口（v2.5 增加模型切换与窗口找回）。"""
+        from ai_client import provider_label, provider_status
+
         m = tk.Menu(self.root, tearoff=0)
         m.add_command(label="隐藏/显示  (Ctrl+Alt+H)", command=self.toggle_visibility)
         m.add_command(label="暂停/开始", command=self._on_toggle_click)
+        m.add_separator()
+        cur = self.cfg.get("ai_provider") or "deepseek"
+        sub = tk.Menu(m, tearoff=0)
+        for st in provider_status(self.cfg):
+            text = st["label"] + ("" if st["configured"] else "（未配置）")
+            if st["id"] == cur:
+                text = "✓ " + text
+            sub.add_command(label=text,
+                            command=lambda pid=st["id"]: self._on_provider_select(pid))
+        m.add_cascade(label=f"模型：{provider_label(cur)}", menu=sub)
+        m.add_command(label="窗口移回主屏", command=self.reset_position)
         m.add_separator()
         m.add_command(label="退出程序", command=self._quit)
         try:
@@ -253,6 +338,41 @@ class AnswerOverlay:
     def _on_trigger_click(self):
         """保底按钮：立即触发一次识别（v2.3）。"""
         self.on_trigger()
+
+    # --------------------------------------------------- 模型切换（v2.5）
+    def refresh_providers(self):
+        """重建模型菜单（配置变化后调用；也可从任意线程调）。"""
+        try:
+            self.root.after(0, self._refresh_providers_ui)
+        except Exception:
+            self._refresh_providers_ui()
+
+    def _refresh_providers_ui(self):
+        from ai_client import is_provider_configured, provider_label, provider_status
+
+        cur = self.cfg.get("ai_provider") or "deepseek"
+        self.provider_menu.delete(0, "end")
+        for st in provider_status(self.cfg):
+            text = st["label"]
+            if not st["configured"]:
+                text += "（未配置）"
+            if st["id"] == cur:
+                text = "✓ " + text
+            self.provider_menu.add_command(
+                label=text, command=lambda pid=st["id"]: self._on_provider_select(pid))
+        self.provider_btn.config(text=f"{provider_label(cur)} ▾")
+        # 当前首选没配 Key 时标黄，提醒先配置
+        self.provider_btn.config(
+            fg="#8ee6a0" if is_provider_configured(self.cfg, cur) else "#e6b450")
+
+    def _on_provider_select(self, pid: str):
+        from ai_client import provider_label
+
+        if self.on_provider_change(pid):
+            self._refresh_providers_ui()
+            self.set_status(f"已切换到 {provider_label(pid)}")
+        else:
+            self.set_status(f"{provider_label(pid)} 未配置 Key（可在 config.json 填写或重开程序配置）")
 
     def set_running_state(self, running: bool):
         """loop 线程同步运行状态（保证按钮文本一致）。"""

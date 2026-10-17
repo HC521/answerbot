@@ -1,10 +1,10 @@
-# AnswerBot-Screen — AI 自动答题机器人（读屏版 v2.4）
+# AnswerBot-Screen — AI 自动答题机器人（读屏版 v2.5）
 
 > 🤖 **AI Agent 接手本项目请先读 [AGENTS.md](AGENTS.md)**——项目定位、模块地图、关键设计决策、
 > 踩坑清单、测试与发布流程都在里面。
 
 个人自用的 Windows 桌面读屏答题辅助程序：**全屏抓取**（不依赖特定客户端窗口），
-自动检测「下一题出现并稳定显示」→ 视觉大模型（豆包主 / 千问备）识别 →
+自动检测「下一题出现并稳定显示」→ 视觉大模型（**DeepSeek 首选** / 千问 / 豆包可切）识别 →
 答案显示在**屏幕 1** 的置顶半透明悬浮窗，抬眼看一眼即可。
 
 > ⚠️ **使用提示**：请遵守所在单位考试规则，风险自担。
@@ -18,7 +18,7 @@
 | 系统 | Windows 10/11（多显示器 + DPI 缩放正常） |
 | Python | 3.10+（仅开发/打包需要；打包后 exe 免 Python 环境） |
 | 考试载体 | 任意：VMware / 天翼云电脑 / 普通浏览器均可（全屏抓取，不看窗口标题） |
-| API | 豆包（火山方舟）或 千问（DashScope）API Key 任选其一 |
+| API | **DeepSeek（推荐，多模态 + 1~2 秒/题）** / 千问（DashScope）/ 豆包（火山方舟），任一 Key 即可 |
 
 ## 2. 安装
 
@@ -27,22 +27,38 @@ cd AnswerBot-Screen
 pip install -r requirements.txt
 ```
 
-## 3. 首次配置（config.json）
+## 3. 首次配置（v2.5：图形向导，不用手改 json）
 
-编辑程序目录下 `config.json`（UTF-8，缺失字段自动补齐）：
+第一次启动（`config.json` 里没有任何 Key）会自动弹出**「AnswerBot 首次配置」窗口**：
+
+1. 选模型提供方（默认 **DeepSeek**）；
+2. 粘贴 API Key（可点「显示」核对）；
+3. 点「测试连接」确认 Key 可用（可选但强烈建议）；
+4. 点「保存并启动」→ 写入本机 `config.json`，程序开始监听。
+
+| 提供方 | 说明 | 模型默认 |
+|---|---|---|
+| **DeepSeek** | 推荐：多模态、1~2 秒/题 | `deepseek-flash` |
+| 千问（DashScope） | 阿里云，中文题稳 | `qwen-vl-max` |
+| 豆包（火山方舟） | 需填接入点 ID `ep-xxxx` | 手填 |
+
+Key 只存本机 `config.json`（已 gitignore，不入库、不上传）。想跳过可以先点「稍后配置」，
+之后把 `config.json` 里对应字段填上即可；字段名见下：
 
 ```jsonc
 {
-  "ai_provider": "qwen",             // doubao / qwen（主识别）
-  "dashscope_api_key": "你的千问Key", // 千问 Key（DashScope）
-  "ark_api_key": "",                 // 豆包 Key（备选，可留空）
-  "capture_monitor": 0,              // 0=所有显示器合并（默认），1..N=指定显示器
-  "fallback_interval_ms": 30000,     // 定时兜底识别：距上次识别 30s 强制再识别一次
-  "hotkey": "ctrl+alt+h"             // 全局隐藏/显示热键
+  "ai_provider": "deepseek",           // 首选：deepseek / qwen / doubao（界面可随时切）
+  "deepseek_api_key": "你的Key",       // DeepSeek
+  "deepseek_model": "deepseek-flash",
+  "dashscope_api_key": "",             // 千问（备用可留空）
+  "qwen_model": "qwen-vl-max",
+  "ark_api_key": "",                   // 豆包（备用可留空）
+  "ark_model": "",
+  "capture_monitor": 0,                // 0=所有显示器合并（默认），1..N=指定显示器
+  "fallback_interval_ms": 30000,       // 定时兜底识别间隔
+  "hotkey": "ctrl+alt+h"               // 全局隐藏/显示热键
 }
 ```
-
-Key 只存本机 config.json（已加入 .gitignore）。
 
 ## 4. 运行
 
@@ -96,21 +112,35 @@ mss 抓取全屏（默认合并所有显示器，`capture_monitor` 可选指定�
 
 - 模型自动识别题型：单选 / **多选** / 判断；
 - 多选题返回全部正确选项（如 `ABD`），判断题返回 `对/错`；
-- 默认模型 `qwen-vl-max`（识别与领域推理更强，PaaS/大模型理论题正确率更佳；想省钱可改回 `qwen-vl-plus`）；发送图分辨率提升至 1600px/JPEG90。
+- 发送图分辨率 1600px/JPEG90（小字题更准）；答案归一化兼容 `B. TCP`、`A、C、D`、`√` 等写法。
 
-### 6.6 主备切换
+### 6.6 模型提供方与切换（v2.5）
 
-豆包识别失败且已配置 `dashscope_api_key` 时，自动切换千问重试一次。
+- 支持三家：**DeepSeek（默认首选）** / 千问 / 豆包，任一 Key 配好即可用；
+- 切换入口有三处（都会立即生效并记住）：
+  1. 悬浮窗左上角 **「DeepSeek ▾」菜单**（最常用）；
+  2. 悬浮窗**右键菜单 → 模型**；
+  3. **托盘 → 模型切换**（单选勾）；
+- 主备链：首选失败自动依次尝试其他**已配置**的提供方；
+- 状态行会显示本题实际用哪家、耗时多少，例如
+  `识别完成（第 3 题）· DeepSeek · 1.4s 把握度 98%`。
 
-### 6.6 系统托盘（FR-13，v2.1）
+> DeepSeek 的 `deepseek-flash` 是推理模型，默认会先输出大段思考链并把 token 用光；
+> 程序已固定传 `thinking={"type":"disabled"}`（实测 8~10s → 1.4~1.8s，且能正常返回 JSON）。
 
-右下角托盘常驻：显示/隐藏悬浮窗、开始/暂停识别、退出。
+### 6.7 系统托盘（FR-13，v2.1）
+
+右下角托盘常驻：显示/隐藏悬浮窗、开始/暂停识别、**模型切换**、**窗口移回主屏**、退出。
 快捷键隐藏后忘记恢复？点托盘一键找回。
 
 ## 7. 参数调优（config.json）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
+| `ai_provider` | `deepseek` | 首选提供方：deepseek / qwen / doubao（界面切换会改写此项） |
+| `deepseek_api_key` / `deepseek_model` | 空 / `deepseek-flash` | DeepSeek Key 与模型 |
+| `dashscope_api_key` / `qwen_model` | 空 / `qwen-vl-max` | 千问 Key 与模型 |
+| `ark_api_key` / `ark_model` | 空 | 豆包 Key 与接入点 ID（ep-xxxx） |
 | `capture_monitor` | 0 | 全屏抓取：0=全部显示器合并，1..N=指定显示器 |
 | `detect_interval_ms` | 800 | 取帧间隔；越小响应越快、CPU 占用越高 |
 | `t_change` | 12 | 废弃（v2.2 起由 t_change_block 替代，保留兼容） |
@@ -122,6 +152,7 @@ mss 抓取全屏（默认合并所有显示器，`capture_monitor` 可选指定�
 | `diff_threshold` | 25 | 像素差分阈值 |
 | `diff_area_ratio` | 0.005 | 杂散小区域过滤（差异像素占比） |
 | `question_roi` | null | 题目区域 [x,y,w,h]（自动学习持久化，可手动改） |
+| `overlay_pos` | [null,null] | 悬浮窗位置（越界会自动移回主屏，v2.5） |
 | `overlay_rect` | null | 悬浮窗像素矩形（自动换算，可覆盖微调） |
 | `dedupe_by_answer` | true | 去重：true=答案+摘要都同才去重；false=仅答案 |
 | `overlay_alpha` | 0.85 | 悬浮窗透明度 |
@@ -148,7 +179,9 @@ pyinstaller AnswerBot.spec
 
 | 现象 | 处理 |
 |---|---|
-| 一直「识别失败」 | 检查 Key/模型 ID、网络（`dashscope.aliyuncs.com` / `ark.cn-beijing.volces.com`） |
+| 一直「识别失败」 | 检查 Key/模型 ID、网络（`api.deepseek.com` / `dashscope.aliyuncs.com` / `ark.cn-beijing.volces.com`） |
+| **只有托盘图标，看不到主界面** | v2.5 已修：保存的悬浮窗位置越界会自动召回主屏；仍找不到就点托盘「窗口移回主屏」 |
+| **模型菜单里想切的那家显示「未配置」** | 该家还没填 Key；在 `config.json` 补对应字段后重启，或重开程序时用配置向导填 |
 | 全屏抓取黑屏 | 客户端是「独占全屏」模式，mss 抓不到 → 改为「窗口/无边框全屏」模式运行客户端 |
 | 同一题反复识别 | 不应出现；出现则调大 `t_change` 或检查 `dedupe_by_answer` |
 | 换题后不出答案 | 调小 `detect_interval_ms`；动画长调大 `n_stable`；再不行等 30s 兜底 |
@@ -158,6 +191,10 @@ pyinstaller AnswerBot.spec
 
 ## 10. 设计决策（与文档的差异/补充）
 
+- v2.5：**DeepSeek 多模态接入并设为首选**（`deepseek-flash` + 强制关思考链，1.4~1.8s/题）；
+  三家提供方可在悬浮窗/托盘/右键菜单随时切换且持久化；**首次运行图形配置向导**；
+  修复**单屏下悬浮窗跑到屏幕外只剩托盘**（位置越界自动召回）；
+  修复首轮兜底识别误触发与识别期间兜底日志刷屏；答案归一化支持 `B. TCP` 这类写法；
 - v2.4（实机反馈修订）：多选题返回全部选项（如 ABD）、判断题对/错，
   题型自动识别；默认模型升级 qwen-vl-max、发送图 1600px/JPEG90（正确率提升）；
   修复绑定按键只起效一次（触发回调线程化，防 Windows 钩子超时移除）；
@@ -177,14 +214,15 @@ pyinstaller AnswerBot.spec
 
 ```
 AnswerBot-Screen/
-├── main.py              # 入口：DPI-Aware → 日志 → 配置 → 悬浮窗/托盘/监听/主循环
-├── screen_capture.py    # 全屏抓取（mss）+ 缩略图 + 黑屏检测（v2.1）
-├── change_detector.py   # pHash 状态机 + 像素差分 ROI 收敛 + 杂散过滤（v2.1）
-├── ai_client.py         # 豆包/千问视觉 + 容错解析 + 重试
-├── answer_overlay.py    # 悬浮窗 + 置顶强化 + get_rect_pixels 排除区换算（v2.1）
-├── loop.py              # 主循环 + 定时兜底识别 + 去重（v2.1）
+├── main.py              # 入口：DPI-Aware → 日志 → 首次配置向导 → 悬浮窗/托盘/监听/主循环
+├── setup_wizard.py      # 首次运行配置向导（v2.5：选提供方 / 填 Key / 测试连接 / 保存）
+├── screen_capture.py    # 全屏抓取（mss）+ 缩略图 + 黑屏检测 + 虚拟桌面矩形（v2.5）
+├── change_detector.py   # 块级 pHash 状态机 + 像素差分 ROI 收敛 + 杂散过滤（v2.2）
+├── ai_client.py         # DeepSeek/千问/豆包视觉 + 主备链 + 容错解析 + 重试（v2.5）
+├── answer_overlay.py    # 悬浮窗 + 模型切换菜单 + 位置越界召回 + 置顶强化（v2.5）
+├── loop.py              # 主循环 + 定时兜底识别 + 去重 + 提供方切换（v2.5）
 ├── input_listener.py    # 手动触发 + 按键录制（引用持有修复，v2.1）
-├── tray.py              # 系统托盘（pystray，v2.1 新增）
+├── tray.py              # 系统托盘（pystray；v2.5 加模型切换/窗口找回）
 ├── config.py / config.json
 ├── requirements.txt / AnswerBot.spec / README.md / .gitignore
 ```

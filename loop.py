@@ -21,7 +21,7 @@ import threading
 import time
 
 import config as cfg_mod
-from ai_client import AiError, ask_ai
+from ai_client import AiError, ask_ai_chain, is_provider_configured, provider_label
 from change_detector import ChangeDetector
 from screen_capture import ScreenCapture, ScreenCaptureError, crop_pixels, mask_rect
 
@@ -44,13 +44,15 @@ class AnswerLoop:
             diff_area_ratio=cfg.get("diff_area_ratio", 0.005),
             question_roi=cfg.get("question_roi"),
             grid=cfg.get("grid", (4, 3)),              # v2.2 块级检测
-            t_change_block=cfg.get("t_change_block", 8),
+            t_change_block=cfg.get("t_change_block", 5),
         )
         self.running = True
         self.paused = False
         self._lock = threading.Lock()          # 手动/自动识别互斥
         self._busy = False                     # 是否正在识别（防重入）
-        self._last_recognize = 0.0             # 上次识别结束时间（兜底计时）
+        # v2.5 修复：初始化为当前时间，否则首轮 now-0 ≥ 兜底间隔恒真，
+        # 程序一启动就会先识别一次（桌面内容可能被当成题目）。
+        self._last_recognize = time.monotonic()
         self._last_result = None               # (answer, summary) 去重用
 
     # ------------------------------------------------------------------
@@ -76,6 +78,19 @@ class AnswerLoop:
             self.overlay.set_status("抓屏失败，稍后再试")
             return
         self._recognize(img, thumb, manual=True, hint="手动触发：识别中…")
+
+    def set_provider(self, pid: str) -> bool:
+        """v2.5：切换首选模型提供方并持久化（未配置该提供方时返回 False）。"""
+        if not is_provider_configured(self.cfg, pid):
+            log.warning("切换失败：%s 未配置 Key", provider_label(pid))
+            return False
+        self.cfg["ai_provider"] = pid
+        try:
+            cfg_mod.set("ai_provider", pid)
+        except Exception as e:
+            log.warning("保存首选提供方失败: %s", e)
+        log.info("首选模型切换为 %s", provider_label(pid))
+        return True
 
     # ------------------------------------------------------------------
     # 主循环
@@ -135,6 +150,8 @@ class AnswerLoop:
     def _recognize(self, img, thumb, manual: bool = False, hint: str | None = None):
         with self._lock:
             if self._busy:
+                # v2.5：忙时也刷新兜底计时，否则识别期间每轮循环都会重复触发兜底、刷日志
+                self._last_recognize = time.monotonic()
                 log.info("识别进行中，忽略本次%s触发", "手动" if manual else "自动")
                 return
             self._busy = True
@@ -173,8 +190,10 @@ class AnswerLoop:
             self.overlay.set_status(f"异常：{e}")
         finally:
             # 无论成败都记基准帧：画面是同一题，避免反复识别
+            # v2.5：基准帧必须用**缩略图**——feed() 也是用缩略图算指纹，
+            # 传原图虽然靠 pHash 尺度不变性也能对上，但写法容易埋坑。
             try:
-                self.detector.set_base(img)
+                self.detector.set_base(thumb)
             except Exception:
                 pass
             self._last_recognize = time.monotonic()
@@ -194,17 +213,14 @@ class AnswerLoop:
         return answer == self._last_result[0]
 
     def _ask_with_fallback(self, img) -> dict:
-        """豆包主 / 千问备；主失败且备已配置时自动切换。"""
-        try:
-            return ask_ai(self.cfg, img, provider="doubao")
-        except AiError as e:
-            if self.cfg.get("dashscope_api_key"):
-                log.warning("豆包失败(%s)，切换千问", e)
-                return ask_ai(self.cfg, img, provider="qwen")
-            raise
+        """v2.5：走提供方链——config 首选优先，失败自动切到其他已配置提供方。
+
+        返回结果含 provider（id）/ provider_label / elapsed，供状态行展示。
+        """
+        return ask_ai_chain(self.cfg, img)
 
     def _show_result(self, result: dict):
-        """显示结果并自增题号（FR-10）。"""
+        """显示结果并自增题号（FR-10）。状态行带上实际使用的模型与耗时（v2.5）。"""
         no = self.cfg.get("question_counter", 0) + 1
         cfg_mod.set("question_counter", no)
 
@@ -212,10 +228,19 @@ class AnswerLoop:
         q = result.get("question") or ""
         # 摘要：question 截断（悬浮窗内部再截 120 字）
         summary = q.replace("\n", " ").strip()
-        status = f"识别完成（第 {no} 题）"
+        label = result.get("provider_label") or provider_label(
+            result.get("provider") or self.cfg.get("ai_provider", "deepseek"))
+        status = f"识别完成（第 {no} 题）· {label}"
+        elapsed = result.get("elapsed")
+        if elapsed:
+            status += f" · {elapsed:.1f}s"
         conf = result.get("confidence")
         if conf:
-            status += f" 把握度 {float(conf):.0%}"
-        log.info("第 %d 题：answer=%s summary=%s", no, answer, summary[:60])
+            try:
+                status += f" 把握度 {float(conf):.0%}"
+            except (TypeError, ValueError):
+                pass
+        log.info("第 %d 题：provider=%s answer=%s summary=%s",
+                 no, label, answer, summary[:60])
         self._last_result = (answer.strip(), summary)
         self.overlay.show(no, answer, summary, status=status)

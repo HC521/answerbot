@@ -22,6 +22,8 @@ a = Analysis(
         'pynput.mouse._win32', 'pynput.keyboard._win32',
         # keyboard / mss / pystray
         'keyboard', 'mss', 'pystray',
+        # v2.5：首次配置向导在函数内按需导入，显式声明防漏
+        'setup_wizard', 'ai_client',
     ],
     hookspath=[],
     hooksconfig={},

@@ -5,7 +5,9 @@
 快速要点：
 
 - Windows 桌面读屏答题工具：全屏抓取 → 块级 pHash 检测 → 视觉大模型 → 置顶悬浮窗显示答案；
+- v2.5：**DeepSeek 首选**（必须传 `thinking={"type":"disabled"}`）、三家模型可在界面切换、
+  首次运行弹图形配置向导（`setup_wizard.py`）、单屏下窗口位置越界会自动召回主屏；
 - 运行：`python main.py`；打包：`pyinstaller AnswerBot.spec`；
 - `config.json` 含 API Key，**已在 .gitignore，严禁提交**；
 - 核心设计不要轻易推翻：块级 pHash（全屏下全局距离被稀释）、悬浮窗区域全链路排除、
-  pynput 触发回调必须异步（Windows 钩子超时会被移除）。
+  pynput 触发回调必须异步（Windows 钩子超时会被移除）、答案归一化只取开头选项字母。

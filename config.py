@@ -26,12 +26,14 @@ DEFAULT_CONFIG = {
     "capture_monitor": 0,               # 全屏抓取：0=所有显示器合并（默认），1..N=指定显示器
     "roi": None,                        # 归一化裁剪 [l,t,r,b]（0~1），null=全屏（一般用自动 ROI）
 
-    # —— AI ——
-    "ark_api_key": "",                  # 豆包（火山方舟）API Key
-    "ark_model": "",                    # 豆包模型/接入点 ID（ep-xxx），以火山方舟控制台为准
+    # —— AI（v2.5：DeepSeek 首选，支持界面切换；三个提供方任一配好即可用）——
+    "ai_provider": "deepseek",          # 首选提供方：deepseek / qwen / doubao（悬浮窗「模型」菜单可切换）
+    "deepseek_api_key": "",             # DeepSeek API Key（推荐，多模态 + 快）
+    "deepseek_model": "deepseek-flash", # DeepSeek 视觉模型（推理模型需关 thinking，程序已处理）
     "dashscope_api_key": "",            # 通义千问（DashScope）API Key
     "qwen_model": "qwen-vl-max",        # 千问模型（v2.4：默认 vl-max，识别/推理更强；可改 qwen-vl-plus 省钱）
-    "ai_provider": "doubao",            # doubao / qwen
+    "ark_api_key": "",                  # 豆包（火山方舟）API Key
+    "ark_model": "",                    # 豆包模型/接入点 ID（ep-xxx），以火山方舟控制台为准
 
     # —— 变化检测 ——
     "detect_interval_ms": 800,          # 取帧间隔（毫秒）
@@ -124,6 +126,7 @@ if __name__ == "__main__":
     c = load()
     print("config.json 路径:", _config_path())
     print("配置项数:", len(c))
-    print("vm_window_keyword =", c["vm_window_keyword"])
-    assert c["ark_api_key"] == "" and c["dashscope_api_key"] == ""
+    print("ai_provider =", c["ai_provider"])
+    print("已填 Key 的提供方:",
+          [k for k in ("deepseek_api_key", "dashscope_api_key", "ark_api_key") if c.get(k)])
     print("OK：config 读写正常")

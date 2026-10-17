@@ -55,11 +55,24 @@ def main():
     log.info("AnswerBot-Screen 启动")
 
     import config as cfg_mod
+
     cfg = cfg_mod.load()
 
-    # Key 检查提示（不阻塞，悬浮窗状态行可见）
-    if not cfg.get("ark_api_key") and not cfg.get("dashscope_api_key"):
-        log.warning("未配置任何 API Key（ark_api_key / dashscope_api_key），请先配置 config.json")
+    # —— v2.5：首次运行（没有任何可用 Key）→ 先弹配置向导 ——
+    from ai_client import configured_providers, provider_label, provider_status
+
+    if not configured_providers(cfg):
+        log.info("未检测到可用的模型 Key，进入首次配置向导")
+        try:
+            from setup_wizard import run_setup_wizard
+
+            if run_setup_wizard(cfg):
+                cfg = cfg_mod.load()
+                log.info("首次配置已完成：首选模型 = %s", provider_label(cfg.get("ai_provider")))
+            else:
+                log.warning("未完成配置：识别时会在状态行提示缺少 Key")
+        except Exception as e:
+            log.exception("配置向导启动失败（已跳过）: %s", e)
 
     # 导入 GUI 相关（放到 DPI/日志之后）
     from answer_overlay import AnswerOverlay
@@ -69,6 +82,20 @@ def main():
     overlay = AnswerOverlay(cfg)
 
     loop = AnswerLoop(cfg, overlay)
+
+    # —— v2.5：模型切换（悬浮窗「模型」菜单 / 托盘 / 右键菜单共用） ——
+    def _switch_provider(pid):
+        try:
+            ok = loop.set_provider(pid)
+        except Exception as e:
+            log.warning("切换模型失败: %s", e)
+            ok = False
+        if ok:
+            overlay.refresh_providers()
+        return ok
+
+    overlay.on_provider_change = _switch_provider
+    overlay.refresh_providers()
 
     # 手动触发（FR-11）
     listener = InputListener(cfg, loop.manual_trigger)
@@ -92,7 +119,7 @@ def main():
     overlay.on_bind = on_bind
     overlay.on_trigger = on_trigger
     overlay.set_running_state(True)
-    overlay.set_status("就绪：监听中（全屏）")
+    overlay.set_status(f"就绪：监听中（全屏）· {provider_label(cfg.get('ai_provider'))}")
 
     # 系统托盘（v2.1 变更 E，FR-13）：回调经 root.after 调度回主线程
     tray_icon = None
@@ -103,6 +130,12 @@ def main():
             on_toggle_visibility=overlay.toggle_visibility,
             on_toggle_pause=lambda: overlay.root.after(0, on_toggle),
             on_quit=lambda: overlay.root.after(0, overlay._quit),
+            # v2.5：模型切换 + 窗口找回（单屏下窗口跑到屏外的救命入口）
+            on_reset_position=overlay.reset_position,
+            provider_items=provider_status(cfg),
+            on_select_provider=lambda pid: overlay.root.after(
+                0, lambda: overlay._on_provider_select(pid)),
+            current_provider=lambda: cfg.get("ai_provider") or "deepseek",
         )
         run_tray(tray_icon)
         log.info("系统托盘已启动")

@@ -56,6 +56,19 @@ def monitor_origin() -> tuple[int, int]:
     return _origin_cache
 
 
+def virtual_screen_rect() -> tuple[int, int, int, int]:
+    """虚拟桌面（所有显示器合并）矩形 (left, top, width, height)。
+
+    v2.5：供悬浮窗位置校验——保存的位置可能来自「曾经接过副屏」的布局，
+    单屏启动时会落到屏幕外（现象：只有托盘图标，看不到主界面）。
+    """
+    import mss
+
+    with mss.mss() as sct:
+        m = sct.monitors[0]
+        return int(m["left"]), int(m["top"]), int(m["width"]), int(m["height"])
+
+
 def is_black(img: Image.Image, variance_threshold: float = 5.0) -> bool:
     """黑屏检测：灰度方差极小（近乎纯色）视为抓取失败/黑屏。"""
     import numpy as np
