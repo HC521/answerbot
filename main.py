@@ -97,6 +97,34 @@ def main():
     overlay.on_provider_change = _switch_provider
     overlay.refresh_providers()
 
+    # —— v2.6：界面里直接粘贴/更换 API Key（悬浮窗 ⚙ / 模型菜单 / 右键 / 托盘）——
+    def on_open_settings():
+        from setup_wizard import open_key_settings
+
+        def _saved(_updated):
+            overlay.refresh_providers()
+            overlay.set_status(
+                f"Key 已保存 · 当前模型 {provider_label(cfg.get('ai_provider'))}")
+
+        def _closed():
+            overlay.modal_open = False
+            try:
+                overlay.root.attributes("-topmost", True)   # 恢复悬浮窗置顶
+            except Exception:
+                pass
+
+        # 打开对话框期间：暂停悬浮窗 lift，并临时取消其置顶，避免盖住对话框
+        overlay.modal_open = True
+        try:
+            overlay.root.attributes("-topmost", False)
+        except Exception:
+            pass
+        dlg = open_key_settings(overlay.root, cfg, on_saved=_saved, on_closed=_closed)
+        if dlg is None:
+            _closed()
+
+    overlay.on_open_settings = on_open_settings
+
     # 手动触发（FR-11）
     listener = InputListener(cfg, loop.manual_trigger)
     listener.start()
@@ -136,6 +164,7 @@ def main():
             on_select_provider=lambda pid: overlay.root.after(
                 0, lambda: overlay._on_provider_select(pid)),
             current_provider=lambda: cfg.get("ai_provider") or "deepseek",
+            on_open_settings=lambda: overlay.root.after(0, on_open_settings),
         )
         run_tray(tray_icon)
         log.info("系统托盘已启动")

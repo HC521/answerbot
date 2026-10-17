@@ -24,13 +24,15 @@ class AnswerOverlay:
     WIDTH, HEIGHT = 420, 200
 
     def __init__(self, cfg: dict, on_toggle=None, on_bind=None, on_trigger=None,
-                 on_provider_change=None):
+                 on_provider_change=None, on_open_settings=None):
         self.cfg = cfg
         self.on_toggle = on_toggle or (lambda: None)   # 开始/暂停回调
         self.on_bind = on_bind or (lambda: None)       # 绑定按键回调
         self.on_trigger = on_trigger or (lambda: None)  # 保底按钮回调（v2.3）
         # v2.5：切换首选模型提供方；返回 True=成功（main 注入，内部调用 loop.set_provider）
         self.on_provider_change = on_provider_change or (lambda pid: False)
+        # v2.6：打开「设置 API Key」对话框（main 注入 setup_wizard.open_key_settings）
+        self.on_open_settings = on_open_settings or (lambda: None)
         self.running = True                            # 循环运行状态（供按钮显示）
         self.visible = True
         self._drag = None                              # 拖拽偏移
@@ -59,7 +61,9 @@ class AnswerOverlay:
 
     def _periodic_lift(self):
         try:
-            if self.visible:
+            # v2.6：打开「设置 API Key」等模态对话框时不要再 lift，
+            # 否则悬浮窗（topmost）会把对话框盖住（截图实测过）。
+            if self.visible and not getattr(self, "modal_open", False):
                 self.root.lift()
         except Exception:
             pass
@@ -88,6 +92,12 @@ class AnswerOverlay:
         self.provider_btn.pack(side="left", padx=(8, 2))
 
         # v2.3 保底按钮：点击立即识别（放最右，显眼）
+        # v2.6：⚙ 设置 API Key（右上角常驻，小白不用改 json）
+        self.btn_settings = tk.Button(top, text="⚙", command=self._on_settings_click,
+                                      font=("Microsoft YaHei UI", 9), bd=0,
+                                      bg="#3a3a3a", fg="#dddddd", padx=4, pady=0,
+                                      activebackground="#555555", activeforeground="white")
+        self.btn_settings.pack(side="right", padx=(2, 0), pady=0)
         self.btn_trigger = tk.Button(top, text="保底", command=self._on_trigger_click,
                                      font=("Microsoft YaHei UI", 8), bd=0,
                                      bg="#4ade80", fg="#1e1e1e", padx=6, pady=1,
@@ -203,7 +213,7 @@ class AnswerOverlay:
 
     def _drag_start(self, event):
         if event.widget in (self.btn_hide, self.btn_toggle, self.btn_bind,
-                            self.btn_trigger, self.provider_btn):
+                            self.btn_trigger, self.provider_btn, self.btn_settings):
             return  # 按钮区域不拖拽（不阻断事件，按钮才能正常响应）
         self._drag = (event.x_root - self.root.winfo_x(),
                       event.y_root - self.root.winfo_y())
@@ -254,6 +264,7 @@ class AnswerOverlay:
         m.add_cascade(label=f"模型：{provider_label(cur)}", menu=sub)
         m.add_command(label="窗口移回主屏", command=self.reset_position)
         m.add_separator()
+        m.add_command(label="⚙ 设置 API Key…", command=self._open_settings_now)
         m.add_command(label="退出程序", command=self._quit)
         try:
             m.tk_popup(event.x_root, event.y_root)
@@ -339,6 +350,18 @@ class AnswerOverlay:
         """保底按钮：立即触发一次识别（v2.3）。"""
         self.on_trigger()
 
+    # ------------------------------------------------- 设置 API Key（v2.6）
+    def _on_settings_click(self):
+        self._open_settings_now()
+
+    def _open_settings_now(self):
+        """打开 Key 设置对话框（悬浮窗 ⚙ / 模型菜单 / 右键 / 托盘 共用）。"""
+        try:
+            self.on_open_settings()
+        except Exception as e:
+            log.exception("打开 Key 设置失败: %s", e)
+            self.set_status(f"打开设置失败：{e}")
+
     # --------------------------------------------------- 模型切换（v2.5）
     def refresh_providers(self):
         """重建模型菜单（配置变化后调用；也可从任意线程调）。"""
@@ -360,6 +383,9 @@ class AnswerOverlay:
                 text = "✓ " + text
             self.provider_menu.add_command(
                 label=text, command=lambda pid=st["id"]: self._on_provider_select(pid))
+        self.provider_menu.add_separator()
+        self.provider_menu.add_command(label="⚙ 设置 API Key…",
+                                       command=self._open_settings_now)
         self.provider_btn.config(text=f"{provider_label(cur)} ▾")
         # 当前首选没配 Key 时标黄，提醒先配置
         self.provider_btn.config(

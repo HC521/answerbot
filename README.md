@@ -1,4 +1,4 @@
-# AnswerBot-Screen — AI 自动答题机器人（读屏版 v2.5）
+# AnswerBot-Screen — AI 自动答题机器人（读屏版 v2.6）
 
 > 🤖 **AI Agent 接手本项目请先读 [AGENTS.md](AGENTS.md)**——项目定位、模块地图、关键设计决策、
 > 踩坑清单、测试与发布流程都在里面。
@@ -27,14 +27,20 @@ cd AnswerBot-Screen
 pip install -r requirements.txt
 ```
 
-## 3. 首次配置（v2.5：图形向导，不用手改 json）
+## 3. 配置 API Key（v2.6：全程界面操作，不用手改 json）
 
-第一次启动（`config.json` 里没有任何 Key）会自动弹出**「AnswerBot 首次配置」窗口**：
+### 3.1 第一次启动
+如果 `config.json` 里没有任何 Key，会自动弹出**「AnswerBot 首次配置」窗口**：
 
-1. 选模型提供方（默认 **DeepSeek**）；
-2. 粘贴 API Key（可点「显示」核对）；
-3. 点「测试连接」确认 Key 可用（可选但强烈建议）；
+1. 在标签页里选提供方（默认 **DeepSeek**）；
+2. 粘贴 API Key（可勾「显示」核对）；
+3. 点「测试连接」确认 Key 可用（可选但强烈建议，401 会直接提示）；
 4. 点「保存并启动」→ 写入本机 `config.json`，程序开始监听。
+
+### 3.2 之后随时更换 / 新增 Key（v2.6 新增）
+**不用重启、不用改文件**：点悬浮窗右上角 **「⚙」** → 弹出「设置 API Key」窗口 →
+在对应标签页粘贴新 Key → 保存立即生效（模型菜单同步刷新）。
+另外两个入口：悬浮窗**右键 → ⚙ 设置 API Key…**、**托盘 → ⚙ 设置 API Key…**。
 
 | 提供方 | 说明 | 模型默认 |
 |---|---|---|
@@ -42,8 +48,8 @@ pip install -r requirements.txt
 | 千问（DashScope） | 阿里云，中文题稳 | `qwen-vl-max` |
 | 豆包（火山方舟） | 需填接入点 ID `ep-xxxx` | 手填 |
 
-Key 只存本机 `config.json`（已 gitignore，不入库、不上传）。想跳过可以先点「稍后配置」，
-之后把 `config.json` 里对应字段填上即可；字段名见下：
+Key 只存本机 `config.json`（已 gitignore，不入库、不上传）。想跳过首次配置可点「稍后配置」，
+之后用 ⚙ 补填即可；字段名如下（手改也支持）：
 
 ```jsonc
 {
@@ -130,7 +136,7 @@ mss 抓取全屏（默认合并所有显示器，`capture_monitor` 可选指定�
 
 ### 6.7 系统托盘（FR-13，v2.1）
 
-右下角托盘常驻：显示/隐藏悬浮窗、开始/暂停识别、**模型切换**、**窗口移回主屏**、退出。
+右下角托盘常驻：显示/隐藏悬浮窗、开始/暂停识别、**模型切换**、**⚙ 设置 API Key**、**窗口移回主屏**、退出。
 快捷键隐藏后忘记恢复？点托盘一键找回。
 
 ## 7. 参数调优（config.json）
@@ -191,6 +197,9 @@ pyinstaller AnswerBot.spec
 
 ## 10. 设计决策（与文档的差异/补充）
 
+- v2.6：**Key 全部界面化**——悬浮窗「⚙」/ 右键 / 托盘随时打开「设置 API Key」对话框
+  （三标签页：DeepSeek/千问/豆包，可测试连接、保存立即生效），同事不用再改 config.json；
+  打开对话框时临时取消悬浮窗置顶并暂停 5s lift，避免置顶小窗盖住对话框；
 - v2.5：**DeepSeek 多模态接入并设为首选**（`deepseek-flash` + 强制关思考链，1.4~1.8s/题）；
   三家提供方可在悬浮窗/托盘/右键菜单随时切换且持久化；**首次运行图形配置向导**；
   修复**单屏下悬浮窗跑到屏幕外只剩托盘**（位置越界自动召回）；
@@ -215,7 +224,7 @@ pyinstaller AnswerBot.spec
 ```
 AnswerBot-Screen/
 ├── main.py              # 入口：DPI-Aware → 日志 → 首次配置向导 → 悬浮窗/托盘/监听/主循环
-├── setup_wizard.py      # 首次运行配置向导（v2.5：选提供方 / 填 Key / 测试连接 / 保存）
+├── setup_wizard.py      # API Key 图形配置（首次向导 + 运行时「设置 API Key」对话框，v2.6）
 ├── screen_capture.py    # 全屏抓取（mss）+ 缩略图 + 黑屏检测 + 虚拟桌面矩形（v2.5）
 ├── change_detector.py   # 块级 pHash 状态机 + 像素差分 ROI 收敛 + 杂散过滤（v2.2）
 ├── ai_client.py         # DeepSeek/千问/豆包视觉 + 主备链 + 容错解析 + 重试（v2.5）

@@ -5,6 +5,8 @@
 快速要点：
 
 - Windows 桌面读屏答题工具：全屏抓取 → 块级 pHash 检测 → 视觉大模型 → 置顶悬浮窗显示答案；
+- v2.6：**Key 全界面化**——悬浮窗「⚙」/右键/托盘随时打开「设置 API Key」对话框，
+  同事粘贴 Key 即可，不用改 config.json；
 - v2.5：**DeepSeek 首选**（必须传 `thinking={"type":"disabled"}`）、三家模型可在界面切换、
   首次运行弹图形配置向导（`setup_wizard.py`）、单屏下窗口位置越界会自动召回主屏；
 - 运行：`python main.py`；打包：`pyinstaller AnswerBot.spec`；

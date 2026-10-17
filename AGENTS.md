@@ -1,6 +1,6 @@
 # AGENTS.md — AnswerBot-Screen 交接说明（给后续 AI Agent）
 
-> 你正在接手一个**已完成并通过实机测试迭代 5 轮**的 Windows 桌面工具。
+> 你正在接手一个**已完成并通过实机测试迭代 6 轮**的 Windows 桌面工具。
 > 读本文即可继续工作，无需追问历史。配套文档：`README.md`（面向用户）、
 > `05-读屏方案-v2.1修改任务书.md`（v2.1 增量需求原文）。
 
@@ -39,15 +39,15 @@ pyinstaller AnswerBot.spec                # 打包 → dist/AnswerBot.exe（单�
 
 | 文件 | 职责 | 关键点 |
 |---|---|---|
-| `main.py` | 入口 | DPI-Aware 必须最先调用；日志写 `logs/answerbot.log`；启动顺序：**首次配置向导（无常 Key 时）** → overlay → listener → tray → loop 线程 → tkinter mainloop |
-| `setup_wizard.py` | 首次配置向导（v2.5） | 独立 `tk.Tk()`，销毁后才创建 overlay（避免双 root）；选提供方/填 Key/`test_connection` 测试/写 config；「稍后配置」可跳过 |
+| `main.py` | 入口 | DPI-Aware 必须最先调用；日志写 `logs/answerbot.log`；启动顺序：**首次配置向导（无任何 Key 时）** → overlay → listener → tray → loop 线程 → tkinter mainloop；注入 `on_provider_change` / `on_open_settings` |
+| `setup_wizard.py` | API Key 图形配置（v2.6）| `KeyForm`（三标签页 + 测试连接）共用给两入口：**首次向导**（独立 `tk.Tk()`，销毁后才建 overlay）与 **运行时「设置 API Key」Toplevel**（悬浮窗 ⚙ / 右键 / 托盘打开，保存即时生效）；对话框打开时调用方要临时取消悬浮窗 topmost 并置 `modal_open=True` |
 | `screen_capture.py` | 全屏抓取 | `capture_fullscreen(monitor=0)` 合并全部显示器；`thumbnail()` 宽≤1280 供检测；`crop_pixels()` ROI 裁剪；`mask_rect()` 涂白悬浮窗；`monitor_origin()` / `virtual_screen_rect()`（v2.5，窗口位置校验）|
 | `change_detector.py` | 变化检测（核心） | **块级 pHash**（grid 4×3，任一块帧间距离≥`t_change_block` 即触发）；`diff_region()` 像素差分定位 ROI；`_ignored_block_mask()` 悬浮窗块排除；状态机 IDLE→CHANGING→STABLE/TIMEOUT |
 | `ai_client.py` | AI 识别 | `PROVIDERS` 元数据 + `ask_ai(provider=)` + `ask_ai_chain()`（首选+备用链）；DeepSeek 必须 `thinking={"type":"disabled"}`；`_pick()`/`_normalize_answer()` 只取开头选项字母（兼容 `B. TCP`）、判断题归一化（√→对）；`compress()` 1600px/JPEG90；重试 2/4s 退避 |
-| `answer_overlay.py` | 悬浮窗 | tkinter 无边框置顶；按钮行：**模型切换菜单**/隐藏/暂停/绑定按键/**保底**；右键菜单（模型/窗口移回主屏/退出）；`get_rect_pixels()` 给检测排除用；`_place_default()` 位置越界自动召回（v2.5）；`show()/set_status()` 内部 `root.after(0,...)` 线程安全 |
+| `answer_overlay.py` | 悬浮窗 | tkinter 无边框置顶；按钮行：**模型切换菜单**/**⚙ 设置 API Key**/隐藏/暂停/绑定按键/**保底**；右键菜单（模型/窗口移回主屏/⚙ 设置/退出）；`get_rect_pixels()` 给检测排除用；`_place_default()` 位置越界自动召回（v2.5）；`show()/set_status()` 内部 `root.after(0,...)` 线程安全 |
 | `loop.py` | 主循环 | 独立线程；变化触发/定时兜底/手动触发统一走 `_recognize()`（`_lock`+`_busy` 互斥）；结果去重；`set_provider()` 切换首选并持久化；**识别失败保留上次答案只更新状态行**；兜底计时初始化为启动时刻（v2.5）|
 | `input_listener.py` | 手动触发/按键录制 | pynput 监听；**触发回调必须异步线程**（见 §6 坑 1）；录制时拒绝鼠标左键；Esc 取消 |
-| `tray.py` | 系统托盘 | pystray 独立线程；菜单：显示隐藏/暂停/**模型切换（单选）**/**窗口移回主屏**/退出；tkinter 操作经 `root.after` 调度 |
+| `tray.py` | 系统托盘 | pystray 独立线程；菜单：显示隐藏/暂停/**模型切换（单选）**/**窗口移回主屏**/**⚙ 设置 API Key**/退出；tkinter 操作经 `root.after` 调度 |
 | `config.py` | 配置读写 | `load()` 用 DEFAULT_CONFIG 补缺失字段；`set()` **全量写回**（注意 §6 坑 6）|
 
 数据流细节：`loop.run()` 每 `detect_interval_ms` 抓一帧原图 + 缩略图 → `feed(thumb, exclude_rects)` →
@@ -103,6 +103,9 @@ STABLE 时 `_recognize(img, thumb)`：ROI（缩略图坐标）换算回原图坐
 12. **Git 推送**：本机实测 GitHub **直连可推送**（`git ls-remote` 2.6s），不需要代理；网页端慢（约 11s）但 git 的 HTTPS 通道正常。
     GCM（Git Credential Manager）已存凭据，push 自动带鉴权。
 13. **GitHub Web 浏览器授权很慢/转圈**：GCM 浏览器授权可能长时间转圈；重试或改用 PAT 粘贴。已授权过的本机直接 `git push` 即可。
+14. **置顶悬浮窗会盖住自己打开的对话框**：悬浮窗是 `-topmost` 且每 5s `lift()` 一次；
+    打开「设置 API Key」这类 Toplevel 前必须①临时 `attributes("-topmost", False)` ②置 `overlay.modal_open=True`
+    让 lift 循环跳过，关闭时再恢复，否则对话框被悬浮窗挡住（实测截图复现过）。
 
 ## 7. 版本历史
 
@@ -114,6 +117,7 @@ STABLE 时 `_recognize(img, thumb)`：ROI（缩略图坐标）换算回原图坐
 | v2.3 | **保底按钮**（悬浮窗右上角点击即识别）、检测/ROI/识别全链路排除悬浮窗区域 |
 | v2.4 | **多选/判断题支持**（ABD、对/错）、默认模型 qwen-vl-max + 1600px/JPEG90、**修复绑定键只起效一次**（钩子超时） |
 | v2.5 | **DeepSeek 多模态接入并设首选**（thinking 关闭，1.4~1.9s）、**三家模型界面可切换**（悬浮窗/托盘/右键，持久化）、**首次运行图形配置向导**（方便同事分发）、**修复单屏下窗口跑到屏外只剩托盘**、修复首轮兜底误触发与 busy 期间日志刷屏、答案归一化修正（`B. TCP`）、`set_base` 改用缩略图 |
+| v2.6 | **Key 全界面化**：悬浮窗「⚙」/右键/托盘随时打开「设置 API Key」对话框（三标签页、测试连接、保存即生效），同事不用改 config.json；对话框打开时临时取消悬浮窗置顶+暂停 lift，避免被盖住 |
 
 ## 8. 已知限制 / 待办候选
 

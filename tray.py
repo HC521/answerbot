@@ -31,12 +31,14 @@ def _make_icon_image():
 
 def create_tray(on_toggle_visibility, on_toggle_pause, on_quit,
                 on_reset_position=None, provider_items=None,
-                on_select_provider=None, current_provider=None):
+                on_select_provider=None, current_provider=None,
+                on_open_settings=None):
     """创建托盘图标。
 
     回调需自行调度到 tkinter 主线程。
     provider_items: [{"id","label","configured"}]；on_select_provider(pid)；
-    current_provider: 返回当前首选 provider id 的 callable（用于单选勾选）。
+    current_provider: 返回当前首选 provider id 的 callable（用于单选勾选）；
+    on_open_settings: 打开「设置 API Key」对话框（v2.6）。
     """
     import pystray
 
@@ -69,6 +71,9 @@ def create_tray(on_toggle_visibility, on_toggle_pause, on_quit,
 
     if on_reset_position:
         items.append(pystray.MenuItem("窗口移回主屏", lambda: on_reset_position()))
+
+    if on_open_settings:
+        items.append(pystray.MenuItem("⚙ 设置 API Key…", lambda: on_open_settings()))
 
     items.append(pystray.Menu.SEPARATOR)
     items.append(pystray.MenuItem("退出", lambda: on_quit()))
